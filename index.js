@@ -59,7 +59,6 @@ async function monitorPlayers(server) {
     const players = detail.slots.Soldier.players;
 
     if (!players || players.length === 0) {
-        logger.info(`${detail.name.substr(0, 20)} 没有玩家`);
         return false;
     }
 
@@ -99,7 +98,7 @@ async function changeMap(server) {
     if (server.runmode === 1) {
         // RunMode 1 的切图逻辑
         if (server.minimumPlayer > detail.slots.Soldier.current) {
-            logger.info(`${detail.name.substr(0, 20)} 地图变更 ${mapPrettyName[server.currentMap] || server.currentMap}=>${mapPrettyName[mapName] || mapName} 人数不足,跳过换图`);
+            logger.info(`${detail.name.substr(0, 20)} 当前地图 ${mapPrettyName[server.currentMap] || server.currentMap} 人数不足,换图未开启`);
             server.time = now();
             server.currentMap = mapName;
             return server;
@@ -113,22 +112,14 @@ async function changeMap(server) {
             return server;
         }
 
-        let mapcount = 1;
-        server.mapSequence = server.mapSequence || [];
-        const mapSequence = server.mapSequence.filter(map => server.whiteList.includes(operationIndex[map]));
+        const mapSequence = server.whiteList.map(index => operations[index][0]);
+        const mapToChangeList = shuffle(mapSequence.filter(map => detail.rotation.some(r => r.mapImage.includes(map))));
 
-        if (mapSequence.length === 0) {
+        if (!mapToChangeList.length) {
             throw new Error(`${server.name} 白名单中的地图序列为空`);
         }
 
-        const mapid = mapSequence[mapcount % mapSequence.length];
-
-        if (server.minimumPlayer > detail.slots.Soldier.current && shouldChangeMap) {
-            logger.info(`${detail.name.substr(0, 20)} 当前地图为 ${mapPrettyName[server.currentMap] || server.currentMap}=>${mapPrettyName[mapName] || mapName} 人数不足,跳过换图`);
-            server.time = now();
-            server.currentMap = mapName;
-            return server;
-        }
+        const mapid = mapToChangeList[0];
 
         if (now() - server.lastChangeTime <= server.skipTime / 2 * 1000) {
             if (server.nextMap === mapName) {
@@ -170,8 +161,25 @@ async function changeMap(server) {
             return server;
         }
 
+        if (typeof operationIndex[mapName] === "number" && typeof operationIndex[server.currentMap] === "number") {
+            const currentMap = mapName;
+            const oldMap = server.currentMap;
+            const currentIndex = serverMapList.indexOf(currentMap);
+            const oldIndex = serverMapList.indexOf(oldMap);
+            let newIndexS = oldIndex + operaions[operationIndex[oldMap]].length;
+            let newIndexO = serverMapList.indexOf(operaions[operationIndex[oldMap]][0]) + operaions[operationIndex[oldMap]].length;
+            if (newIndexS >= serverMapList.length) newIndexS = 0;
+            if (newIndexO >= serverMapList.length) newIndexO = 0;
+            if (currentIndex !== newIndexS && currentIndex !== newIndexO) {
+                logger.info(`${detail.name.substr(0, 20)} 地图变更 ${mapPrettyName[server.currentMap] || server.currentMap}=>${mapPrettyName[mapName] || mapName} 判断为人工换图,跳过换图`);
+                server.time = now();
+                server.currentMap = mapName;
+                return server;
+            }
+        }
+
         try {
-            await fetchBF1Api("RSP.chooseLevel", server.account, { persistedGameId: detail.guid, levelIndex: mapid });
+            await fetchBF1Api("RSP.chooseLevel", server.account, { persistedGameId: detail.guid, levelIndex: detail.rotation.findIndex(r => r.mapImage.includes(mapid)) });
             logger.info(`${detail.name.substr(0, 20)} 地图变更 ${mapPrettyName[server.currentMap] || server.currentMap} 更换为 ${mapPrettyName[mapid] || mapid}`);
         } catch (error) {
             if (error.code === -32603) {
