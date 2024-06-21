@@ -8,9 +8,24 @@ import moment from 'moment';
 import { scheduleJob } from 'node-schedule';
 import { Agent } from 'https';
 
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const agent = new Agent({ keepAlive: true });
+const fetch = require('node-fetch');
+
+const apiBaseURL = 'https://api.gametools.network';
+const apiEndpoint = '/bf1/players';
+const platform = 'pc'; 
+
+async function getPlayerStats(playerName) {
+    const response = await fetch(`${apiBaseURL}${apiEndpoint}?name=${playerName}&platform=${platform}`);
+    if (!response.ok) {
+        throw new Error(`Error fetching player stats: ${response.statusText}`);
+    }
+    const data = await response.json();
+    return data;
+}
 
 log4js.configure({
     appenders: {
@@ -63,13 +78,13 @@ async function monitorPlayers(server) {
         return false;
     }
 
-    const initialCounts = await Promise.all(players.map(player => getGameCount(server.account, player.personaId)));
+    const initialCounts = await Promise.all(players.map(player => getPlayerStats(player.name).then(data => data.roundsPlayed)));
 
     let increasedCount = 0;
     for (let i = 0; i < 30; i++) {
         await sleep(1000);  // 每秒检查一次
 
-        const newCounts = await Promise.all(players.map(player => getGameCount(server.account, player.personaId)));
+        const newCounts = await Promise.all(players.map(player => getPlayerStats(player.name).then(data => data.roundsPlayed)));
 
         increasedCount = 0;
         for (let j = 0; j < players.length; j++) {
@@ -95,16 +110,8 @@ async function changeMap(server) {
     if (server.history.length > 10) server.history.length = 10;
     server.history = server.history.filter(item => item || item === 0);
 
-    // 检查 RunMode
+    // 切图逻辑
     if (server.runmode === 1) {
-        // RunMode 1 的切图逻辑
-        if (server.minimumPlayer > detail.slots.Soldier.current) {
-            logger.info(`${detail.name.substr(0, 20)} 地图变更 ${mapPrettyName[server.currentMap] || server.currentMap}=>${mapPrettyName[mapName] || mapName} 人数不足,跳过换图`);
-            server.time = now();
-            server.currentMap = mapName;
-            return server;
-        }
-
         const shouldChangeMap = await monitorPlayers(server);
         if (!shouldChangeMap) {
             logger.info(`${detail.name.substr(0, 20)} 没有足够的玩家游戏场次增加，跳过换图`);
@@ -113,22 +120,14 @@ async function changeMap(server) {
             return server;
         }
 
-        let mapcount = 1;
-        server.mapSequence = server.mapSequence || [];
-        const mapSequence = server.mapSequence.filter(map => server.whiteList.includes(operationIndex[map]));
+        const mapSequence = server.whiteList.map(index => operations[index][0]);
+        const mapToChangeList = shuffle(mapSequence.filter(map => detail.rotation.some(r => r.mapImage.includes(map))));
 
-        if (mapSequence.length === 0) {
+        if (!mapToChangeList.length) {
             throw new Error(`${server.name} 白名单中的地图序列为空`);
         }
 
-        const mapid = mapSequence[mapcount % mapSequence.length];
-
-        if (server.minimumPlayer > detail.slots.Soldier.current && shouldChangeMap) {
-            logger.info(`${detail.name.substr(0, 20)} 当前地图为 ${mapPrettyName[server.currentMap] || server.currentMap}=>${mapPrettyName[mapName] || mapName} 人数不足,跳过换图`);
-            server.time = now();
-            server.currentMap = mapName;
-            return server;
-        }
+        const mapid = mapToChangeList[0];
 
         if (now() - server.lastChangeTime <= server.skipTime / 2 * 1000) {
             if (server.nextMap === mapName) {
@@ -171,7 +170,7 @@ async function changeMap(server) {
         }
 
         try {
-            await fetchBF1Api("RSP.chooseLevel", server.account, { persistedGameId: detail.guid, levelIndex: mapid });
+            await fetchBF1Api("RSP.chooseLevel", server.account, { persistedGameId: detail.guid, levelIndex: detail.rotation.findIndex(r => r.mapImage.includes(mapid)) });
             logger.info(`${detail.name.substr(0, 20)} 地图变更 ${mapPrettyName[server.currentMap] || server.currentMap} 更换为 ${mapPrettyName[mapid] || mapid}`);
         } catch (error) {
             if (error.code === -32603) {
@@ -181,7 +180,6 @@ async function changeMap(server) {
         }
 
         server.lastChangeTime = now();
-        mapcount++;
         server.currentMap = mapid;
         return server;
     } else {
@@ -420,22 +418,25 @@ class Warn extends Error {
     }
 }
 
-scheduleJob('0,30 * * * * *', (time) => {
-    const reqs = servers.map(server => changeMap(server)
-        .catch(err => {
-            if (err.name === "Error") {
-                logger.error(err.message);
-                return;
-            }
-            if (err.name === "Warn") {
-                logger.warn(err.message);
-                return;
-            }
-            logger.error(err);
-        })
+scheduleJob('0,30 * * * * *', async (time) => {
+    const reqs = servers.map(server => 
+        changeMap(server)
+            .then(result => {
+                logger.info(result);
+            })
+            .catch(err => {
+                if (err.name === "Error") {
+                    logger.error(err.message);
+                    return;
+                }
+                if (err.name === "Warn") {
+                    logger.warn(err.message);
+                    return;
+                }
+                logger.error(err);
+            })
     );
-    Promise.allSettled(reqs).then(() => {
-        fs.writeFileSync(path.join(__dirname, "./profile/server.json"), JSON.stringify(servers));
-        fs.writeFileSync(path.join(__dirname, "./profile/account.json"), JSON.stringify(accounts));
-    });
+    await Promise.allSettled(reqs);
+    fs.writeFileSync(path.join(__dirname, "./profile/server.json"), JSON.stringify(servers));
+    fs.writeFileSync(path.join(__dirname, "./profile/account.json"), JSON.stringify(accounts));
 });

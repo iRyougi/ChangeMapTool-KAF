@@ -365,3 +365,56 @@ async function fetchBF1Api(method, sessionId, params = {}) {
 
     return result.result;
 }
+
+async function getTopPlayers(server) {
+    const detail = await fetchBF1Api("GameServer.getServerDetails", server.account, { gameId: server.gameId });
+    const players = detail.slots.Soldier.players;
+
+    if (!players || players.length === 0) {
+        logger.info(`${detail.name.substr(0, 20)} 没有玩家`);
+        return [];
+    }
+
+    const playerLevels = await Promise.all(players.map(async player => {
+        const stats = await fetchBF1Api("Stats.detailedStatsByPersonaId", server.account, { game: "tunguska", personaId: player.personaId });
+        return {
+            personaId: player.personaId,
+            level: stats.rank,
+            roundsPlayed: stats.roundsPlayed
+        };
+    }));
+
+    playerLevels.sort((a, b) => b.level - a.level);
+
+    return playerLevels.slice(0, 3);
+}
+
+async function monitorTopPlayers(server) {
+    const topPlayers = await getTopPlayers(server);
+
+    if (topPlayers.length === 0) return false;
+
+    const initialRounds = topPlayers.map(player => player.roundsPlayed);
+
+    for (let i = 0; i < 30; i++) {
+        await sleep(1000);  // 每秒检查一次
+
+        const newRounds = await Promise.all(topPlayers.map(async player => {
+            const stats = await fetchBF1Api("Stats.detailedStatsByPersonaId", server.account, { game: "tunguska", personaId: player.personaId });
+            return stats.roundsPlayed;
+        }));
+
+        let increasedCount = 0;
+        for (let j = 0; j < topPlayers.length; j++) {
+            if (newRounds[j] > initialRounds[j]) {
+                increasedCount++;
+            }
+        }
+
+        if (increasedCount >= topPlayers.length) {
+            return true;
+        }
+    }
+
+    return false;
+}
