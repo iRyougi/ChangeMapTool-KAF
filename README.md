@@ -8,6 +8,8 @@
 
 © KAMIZUBAKI STUDIO 2024 #EVERTHING START FROM HERE
 
+![GitHub License](https://img.shields.io/github/license/iRyougi/LICENSE)
+
 ## 目录
 
 [TOC]
