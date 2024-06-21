@@ -8,7 +8,7 @@
 
 © KAMIZUBAKI STUDIO 2024 #EVERTHING START FROM HERE
 
-![GitHub License](https://img.shields.io/github/license/iRyougi/LICENSE)
+![GitHub License](https://img.shields.io/github/license/iRyougi/ChangeMapTool-KAF)
 
 ## 目录
 
