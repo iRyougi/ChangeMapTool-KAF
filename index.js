@@ -121,8 +121,6 @@ async function monitorPlayers(server) {
     return false;
 }
 
-
-
 async function changeMap(server) {
     const detail = await fetchBF1Api("GameServer.getServerDetails", server.account, { gameId: server.gameId });
     const mapName = detail && detail.mapName || null;
