@@ -12,7 +12,7 @@ import { Agent } from 'https';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const agent = new Agent({ keepAlive: true });
-const fetch = require('node-fetch');
+// const fetch = require('node-fetch');
 
 const apiBaseURL = 'https://api.gametools.network';
 const apiEndpoint = '/bf1/players';
@@ -70,36 +70,58 @@ async function getGameCount(sessionId, personaId) {
 }
 
 async function monitorPlayers(server) {
-    const detail = await fetchBF1Api("GameServer.getServerDetails", server.account, { gameId: server.gameId });
-    const players = detail.slots.Soldier.players;
+    try {
+        const detail = await fetchBF1Api("GameServer.getServerDetails", server.account, { gameId: server.gameId });
 
-    if (!players || players.length === 0) {
-        logger.info(`${detail.name.substr(0, 20)} 没有玩家`);
-        return false;
-    }
+        
 
-    const initialCounts = await Promise.all(players.map(player => getPlayerStats(player.name).then(data => data.roundsPlayed)));
+        // 获取当前玩家数量
+        const currentPlayerCount = detail.slots.Soldier.current;
 
-    let increasedCount = 0;
-    for (let i = 0; i < 30; i++) {
-        await sleep(1000);  // 每秒检查一次
+        // 判断当前是否有玩家
+        if (currentPlayerCount === 0) {
+            logger.info(`${detail.name.substr(0, 20)} 没有玩家`);
+            return false;
+        }
 
-        const newCounts = await Promise.all(players.map(player => getPlayerStats(player.name).then(data => data.roundsPlayed)));
+        // 获取所有玩家的详细信息
+        const players = detail.slots.Soldier.players;  // 请根据实际的字段名称进行调整
+        // if (!players || players.length === 0) {
+        //     logger.warn(`${detail.name.substr(0, 20)} 获取玩家详细信息失败`);
+        //     return false;
+        // }
 
-        increasedCount = 0;
-        for (let j = 0; j < players.length; j++) {
-            if (newCounts[j] > initialCounts[j]) {
-                increasedCount++;
+        // 获取所有玩家的初始游戏场次
+        const initialCounts = await Promise.all(players.map(player => getPlayerStats(player.name).then(data => data.roundsPlayed)));
+
+        let increasedCount = 0;
+        for (let i = 0; i < 30; i++) {
+            await sleep(1000);  // 每秒检查一次
+
+            // 获取所有玩家的新游戏场次
+            const newCounts = await Promise.all(players.map(player => getPlayerStats(player.name).then(data => data.roundsPlayed)));
+
+            increasedCount = 0;
+            for (let j = 0; j < players.length; j++) {
+                if (newCounts[j] > initialCounts[j]) {
+                    increasedCount++;
+                }
+            }
+
+            // 检查是否有20位以上玩家游戏场次增加
+            if (increasedCount >= 20) {
+                return true;
             }
         }
-
-        if (increasedCount >= Math.max(1, players.length - 3)) {
-            return true;
-        }
+    } catch (error) {
+        logger.error(`Error in monitorPlayers: ${error.message}`);
+        return false;
     }
 
     return false;
 }
+
+
 
 async function changeMap(server) {
     const detail = await fetchBF1Api("GameServer.getServerDetails", server.account, { gameId: server.gameId });
@@ -110,7 +132,6 @@ async function changeMap(server) {
     if (server.history.length > 10) server.history.length = 10;
     server.history = server.history.filter(item => item || item === 0);
 
-    // 切图逻辑
     if (server.runmode === 1) {
         const shouldChangeMap = await monitorPlayers(server);
         if (!shouldChangeMap) {
@@ -144,22 +165,6 @@ async function changeMap(server) {
                 server.lastChangeTime = 0;
                 throw new Error(`${detail.name.substr(0, 20)} 换图失败,未更换至预期地图 当前为${mapPrettyName[mapName]}`);
             }
-        }
-
-        if (now() - server.time <= server.skipTime * 1000) {
-            logger.info(`${detail.name.substr(0, 20)} 地图变更 ${mapPrettyName[server.currentMap] || server.currentMap}=>${mapPrettyName[mapName] || mapName} 时间过短(${Math.floor((now() - server.time) / 1000)})s,跳过换图`);
-            server.time = now();
-            server.currentMap = mapName;
-            server.history[0] = operationIndex[mapName];
-            return server;
-        }
-
-        if (now() - server.time >= 10800 * 1000) {
-            logger.info(`${detail.name.substr(0, 20)} 地图变更 ${mapPrettyName[server.currentMap] || server.currentMap}=>${mapPrettyName[mapName] || mapName} 时间过长(${Math.floor((now() - server.time) / 1000)})s,跳过换图`);
-            server.time = now();
-            server.currentMap = mapName;
-            server.history[0] = operationIndex[mapName];
-            return server;
         }
 
         if (mapName === opNextMap[server.currentMap]) {
@@ -422,7 +427,7 @@ scheduleJob('0,30 * * * * *', async (time) => {
     const reqs = servers.map(server => 
         changeMap(server)
             .then(result => {
-                logger.info(result);
+                logger.info('玩家场次已检测');
             })
             .catch(err => {
                 if (err.name === "Error") {
