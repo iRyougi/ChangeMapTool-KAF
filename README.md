@@ -2,7 +2,7 @@
 
 # 战地一行动模式换图工具支线（KAF）开发版
 
-这里是KAF服主東雪莲，很高兴能为大家开发一个这样的工具，本工具基于master（szop服主）的ChangeMapTool修改
+这里是KAF服主東雪莲，很高兴能为大家开发一个这样的工具，本工具基于22的ChangeMapTool修改
 
 本程序仅用于行动模式！如果你的服务器是其他模式，无法使用本程序
 
@@ -166,6 +166,16 @@ Server-WhiteList
 
 ## 项目迭代说明
 
+### 测试版 1.0.2 Beta.2
+
+优化了代码逻辑，现在逻辑没有问题了
+
+> [!CAUTION]
+>
+> 该版本依旧无法使用，请等待更新GametoolAPI，这项工作会在2天内完成
+>
+> 该API用于局内玩家的获取
+
 ### 测试版 1.0.1 Beta
 
 #### 功能实现
@@ -206,8 +216,8 @@ Server-WhiteList
 
 ------
 
-ChangeMapTool 原开发者 Szop服主 master
+Szop服主 master
 
-战地一API提供者 22
+战地一API提供者与工具原开发者 22
 
-ORTW服主 qingsr
+ORTW服主 qiansr
