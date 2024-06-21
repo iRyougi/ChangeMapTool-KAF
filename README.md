@@ -6,9 +6,7 @@
 
 本程序仅用于行动模式！如果你的服务器是其他模式，无法使用本程序
 
-© KAMIZUBAKI STUDIO 2024 #EVERTHING START FROM HERE
-
-![GitHub License](https://img.shields.io/github/license/iRyougi/ChangeMapTool-KAF)
+![GitHub License](https://img.shields.io/github/license/iRyougi/ChangeMapTool-KAF) © KAMIZUBAKI STUDIO 2024 #EVERTHING START FROM HERE
 
 ## 目录
 
