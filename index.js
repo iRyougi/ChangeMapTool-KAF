@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import moment from 'moment';
 import { scheduleJob } from 'node-schedule';
 import { Agent } from 'https';
+import { gateway, blaze, loggest } from "./client.js"
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -69,124 +70,83 @@ async function getGameCount(sessionId, personaId) {
     return response.roundsPlayed || 0;
 }
 
-async function monitorPlayers(server) {
-    try {
-        const detail = await fetchBF1Api("GameServer.getServerDetails", server.account, { gameId: server.gameId });
-
-        
-
-        // 获取当前玩家数量
-        const currentPlayerCount = detail.slots.Soldier.current;
-
-        // 判断当前是否有玩家
-        if (currentPlayerCount === 0) {
-            logger.info(`${detail.name.substr(0, 20)} 没有玩家`);
-            return false;
+async function changeMap(server) {
+    if (server.runmode === 1) {
+        const { gameIds } = JSON.parse(fs.readFileSync("./config.json").toString())
+        const campaignStatus = await gateway({ method: "CampaignOperations.getPlayerCampaignStatus" })
+        const firstMap = opLastMapName[campaignStatus?.op1?.operationIndex]
+        const secondMap = opLastMapName[campaignStatus?.op2?.operationIndex]
+        if (!firstMap || !secondMap) {
+            loggest.info(`当前无行动，跳过本轮检查`)
+            return
         }
+        const { data: { 'LGAM 43': result } } = await blaze({ "method": "GameManager.getFullGameData", "data": { "GIDL 40": gameIds } })
+        for (let fullGameData of result) {
+            const {
+                'GAME 3': {
+                    'GNAM 1': serverName,
+                    'GID  0': gameId,
+                    'PGID 1': guid,
+                    'ATTR 511': info,
+                    'ATTR 511': {
+                        level: map,
+                        progress
+                    }
+                },
+            'MODE 1': mode,
+            'PROS 43': playerList
+            } = fullGameData
 
-        // 获取所有玩家的详细信息
-        const players = detail.slots.Soldier.players;  // 请根据实际的字段名称进行调整
-        // if (!players || players.length === 0) {
-        //     logger.warn(`${detail.name.substr(0, 20)} 获取玩家详细信息失败`);
-        //     return false;
-        // }
+            if (!playerList?.length) {
+                loggest.info(`服务器 ${serverName.slice(0, 15)} 没有玩家在线，跳过检查`)
+                continue
+            }
 
-        // 获取所有玩家的初始游戏场次
-        const initialCounts = await Promise.all(players.map(player => getPlayerStats(player.name).then(data => data.roundsPlayed)));
+            if (mode !== "BreakthroughLarge") {
+                loggest.info(`服务器 ${serverName.slice(0, 15)} 不是行动模式，跳过检查`)
+                continue
+            }
+            if ((map === secondMap || map === firstMap) && +progress !== 5) {
+                loggest.info(`服务器 ${serverName.slice(0, 15)} 正在运行 ${opName[map]} 行动，进度 ${progress / 5 * 100}%，跳过检查`)
+                continue
+            }
 
-        let increasedCount = 0;
-        for (let i = 0; i < 30; i++) {
-            await sleep(1000);  // 每秒检查一次
+            const mapList = (info.maps1 + info.maps2 + info.maps3 + info.maps4 + info.maps5 + info.maps6 + info.maps7 + info.maps8 + info.maps9 + info.maps10 + info.maps11 + info.maps12 + info.maps13 + info.maps14 + info.maps15 + info.maps16).split(";").map(m => m.split(",")[0]).filter(m => m)
+            if (!mapList.includes(firstMap) || !mapList.includes(secondMap)) {
+                loggest.error(`服务器 ${serverName.slice(0, 15)} 地图不完整，跳过换图`)
+                continue
+            }
 
-            // 获取所有玩家的新游戏场次
-            const newCounts = await Promise.all(players.map(player => getPlayerStats(player.name).then(data => data.roundsPlayed)));
+            let mapToChange
+            if (map !== secondMap && map !== firstMap) {
+                mapToChange = firstMap
+                loggest.info(`服务器 ${serverName.slice(0, 15)} 未在运行本期行动，正在换图`)
+            } else {
+                mapToChange = map !== firstMap ? firstMap : secondMap
+                loggest.info(`服务器 ${serverName.slice(0, 15)} 正在运行 ${opName[map]} 行动，进度 ${progress / 5 * 100}%，正在换图`)
+            }
 
-            increasedCount = 0;
-            for (let j = 0; j < players.length; j++) {
-                if (newCounts[j] > initialCounts[j]) {
-                    increasedCount++;
+            try {
+                await gateway({ method: "RSP.chooseLevel", params: { persistedGameId: guid, levelIndex: mapList.indexOf(mapToChange) } })
+                loggest.info(`服务器 ${serverName.slice(0, 15)} 开始运行 ${opName[mapToChange]} 行动`)
+            } catch (error) {
+                if (error.error?.code === -32603) {
+                    loggest.error(`服务器 ${serverName.slice(0, 15)} 换图失败，账号没有管理员权限`)
+                } else {
+                    loggest.error(`服务器 ${serverName.slice(0, 15)} 换图失败\n`, error)
                 }
             }
-
-            // 检查是否有20位以上玩家游戏场次增加
-            if (increasedCount >= 20) {
-                return true;
-            }
         }
-    } catch (error) {
-        logger.error(`Error in monitorPlayers: ${error.message}`);
-        return false;
-    }
-
-    return false;
-}
-
-async function changeMap(server) {
-    const detail = await fetchBF1Api("GameServer.getServerDetails", server.account, { gameId: server.gameId });
-    const mapName = detail && detail.mapName || null;
-    if (!mapName) throw new Warn(`${server.name && server.name.substr(0, 20)} 获取信息失败`);
-    if (detail.mapMode !== "BreakthroughLarge") throw new Warn(`${server.name && server.name.substr(0, 20)} 模式错误`);
-    server.name = detail.name;
-    if (server.history.length > 10) server.history.length = 10;
-    server.history = server.history.filter(item => item || item === 0);
-
-    if (server.runmode === 1) {
-        const shouldChangeMap = await monitorPlayers(server);
-        if (!shouldChangeMap) {
-            logger.info(`${detail.name.substr(0, 20)} 没有足够的玩家游戏场次增加，跳过换图`);
-            server.time = now();
-            server.currentMap = mapName;
-            return server;
-        }
-
-        const mapSequence = server.whiteList.map(index => operations[index][0]);
-        const mapToChangeList = shuffle(mapSequence.filter(map => detail.rotation.some(r => r.mapImage.includes(map))));
-
-        if (!mapToChangeList.length) {
-            throw new Error(`${server.name} 白名单中的地图序列为空`);
-        }
-
-        const mapid = mapToChangeList[0];
-
-        if (now() - server.lastChangeTime <= server.skipTime / 2 * 1000) {
-            if (server.nextMap === mapName) {
-                logger.info(`${detail.name.substr(0, 20)} 换图完成 当前为${mapPrettyName[mapName]}`);
-                server.time = now();
-                server.currentMap = mapName;
-                server.history[0] = operationIndex[mapName];
-                server.lastChangeTime = 0;
-                return server;
-            } else {
-                server.time = now();
-                server.currentMap = mapName;
-                server.history[0] = operationIndex[mapName];
-                server.lastChangeTime = 0;
-                throw new Error(`${detail.name.substr(0, 20)} 换图失败,未更换至预期地图 当前为${mapPrettyName[mapName]}`);
-            }
-        }
-
-        if (mapName === opNextMap[server.currentMap]) {
-            logger.info(`${detail.name.substr(0, 20)} 地图变更 ${mapPrettyName[server.currentMap] || server.currentMap}=>${mapPrettyName[mapName] || mapName} 行动正常轮换,跳过换图`);
-            server.time = now();
-            server.currentMap = mapName;
-            return server;
-        }
-
-        try {
-            await fetchBF1Api("RSP.chooseLevel", server.account, { persistedGameId: detail.guid, levelIndex: detail.rotation.findIndex(r => r.mapImage.includes(mapid)) });
-            logger.info(`${detail.name.substr(0, 20)} 地图变更 ${mapPrettyName[server.currentMap] || server.currentMap} 更换为 ${mapPrettyName[mapid] || mapid}`);
-        } catch (error) {
-            if (error.code === -32603) {
-                throw new Error(`${detail.name.substr(0, 20)} 无权限更换地图`);
-            }
-            throw error;
-        }
-
-        server.lastChangeTime = now();
-        server.currentMap = mapid;
-        return server;
     } else {
         // 原本的 RunMode 0 的切图逻辑
+        const detail = await fetchBF1Api("GameServer.getServerDetails", server.account, { gameId: server.gameId });
+        const mapName = detail && detail.mapName || null;
+        if (!mapName) throw new Warn(`${server.name && server.name.substr(0, 20)} 获取信息失败`);
+        if (detail.mapMode !== "BreakthroughLarge") throw new Warn(`${server.name && server.name.substr(0, 20)} 模式错误`);
+        server.name = detail.name;
+        if (server.history.length > 10) server.history.length = 10;
+        server.history = server.history.filter(item => item || item === 0);
+
         if (server.history[0] !== operationIndex[mapName]) {
             server.history.unshift(operationIndex[mapName]);
         }
