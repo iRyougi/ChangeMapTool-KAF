@@ -72,15 +72,18 @@ async function getGameCount(sessionId, personaId) {
 
 async function changeMap(server) {
     if (server.runmode === 1) {
-        const { gameIds } = JSON.parse(fs.readFileSync("./config.json").toString())
+        const { gameIds } = server.gameId
         const campaignStatus = await gateway({ method: "CampaignOperations.getPlayerCampaignStatus" })
         const firstMap = opLastMapName[campaignStatus?.op1?.operationIndex]
         const secondMap = opLastMapName[campaignStatus?.op2?.operationIndex]
+
         if (!firstMap || !secondMap) {
             loggest.info(`当前无行动，跳过本轮检查`)
             return
         }
+
         const { data: { 'LGAM 43': result } } = await blaze({ "method": "GameManager.getFullGameData", "data": { "GIDL 40": gameIds } })
+
         for (let fullGameData of result) {
             const {
                 'GAME 3': {
@@ -93,8 +96,8 @@ async function changeMap(server) {
                         progress
                     }
                 },
-            'MODE 1': mode,
-            'PROS 43': playerList
+                'MODE 1': mode,
+                'PROS 43': playerList
             } = fullGameData
 
             if (!playerList?.length) {
@@ -106,6 +109,7 @@ async function changeMap(server) {
                 loggest.info(`服务器 ${serverName.slice(0, 15)} 不是行动模式，跳过检查`)
                 continue
             }
+
             if ((map === secondMap || map === firstMap) && +progress !== 5) {
                 loggest.info(`服务器 ${serverName.slice(0, 15)} 正在运行 ${opName[map]} 行动，进度 ${progress / 5 * 100}%，跳过检查`)
                 continue
@@ -118,13 +122,9 @@ async function changeMap(server) {
             }
 
             let mapToChange
-            if (map !== secondMap && map !== firstMap) {
-                mapToChange = firstMap
-                loggest.info(`服务器 ${serverName.slice(0, 15)} 未在运行本期行动，正在换图`)
-            } else {
-                mapToChange = map !== firstMap ? firstMap : secondMap
-                loggest.info(`服务器 ${serverName.slice(0, 15)} 正在运行 ${opName[map]} 行动，进度 ${progress / 5 * 100}%，正在换图`)
-            }
+            
+            mapToChange = map !== firstMap ? firstMap : secondMap
+            loggest.info(`服务器 ${serverName.slice(0, 15)} 正在运行 ${opName[map]} 行动，进度 ${progress / 5 * 100}%，正在换图`)
 
             try {
                 await gateway({ method: "RSP.chooseLevel", params: { persistedGameId: guid, levelIndex: mapList.indexOf(mapToChange) } })
